@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useVehiclesStore } from '../stores/vehicles'
 import { loadAdvisoryForUser } from '../lib/deviceCache'
 import { ACTIVITY_TYPE_LABELS, QUICK_ACTIVITY_TYPES } from '../constants/serviceActivities'
 import OfflineBanner from '../components/OfflineBanner.vue'
+import Modal from '../components/Modal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,6 +23,7 @@ const odometer = ref(0)
 const note = ref('')
 const saving = ref(false)
 const formError = ref('')
+const showMileageModal = ref(false)
 
 const svcOdo = ref('')
 const svcDate = ref('')
@@ -217,11 +219,18 @@ async function submitMileage() {
     recs.value = await vehicles.getRecommendations(id.value)
     await vehicles.saveLocalAdvisorySnapshot(id.value, history.value, recs.value)
     dataFromDevice.value = false
+    showMileageModal.value = false
   } catch (e) {
     formError.value = e.data?.error || e.message || 'Could not save mileage'
   } finally {
     saving.value = false
   }
+}
+
+async function openMileageModal() {
+  formError.value = ''
+  showMileageModal.value = true
+  await nextTick()
 }
 
 async function saveLastService() {
@@ -289,28 +298,44 @@ function severityClass(s) {
               · {{ new Date(vehicle.last_mileage_at).toLocaleString() }}
             </span>
           </p>
-          <form class="stack" @submit.prevent="submitMileage">
-            <div>
-              <label class="label" for="new-odo">Current odometer (mi)</label>
-              <input
-                id="new-odo"
-                v-model.number="odometer"
-                class="input"
-                type="number"
-                :min="vehicle.current_odometer_mi"
-                required
-              />
-            </div>
-            <div>
-              <label class="label" for="mile-note">Note (optional)</label>
-              <input id="mile-note" v-model="note" class="input" maxlength="500" />
-            </div>
+          <button type="button" class="btn btn-primary" @click="openMileageModal">
+            Enter current odometer
+          </button>
+        </div>
+      </details>
+
+      <Modal
+        v-model="showMileageModal"
+        title="Update odometer"
+        description="Enter your current odometer reading in miles. This updates reminders and improves service timing estimates."
+      >
+        <form class="stack" @submit.prevent="submitMileage">
+          <div>
+            <label class="label" for="new-odo">Current odometer (mi)</label>
+            <input
+              id="new-odo"
+              data-autofocus
+              v-model.number="odometer"
+              class="input"
+              type="number"
+              :min="vehicle.current_odometer_mi"
+              required
+            />
+          </div>
+          <div>
+            <label class="label" for="mile-note">Note (optional)</label>
+            <input id="mile-note" v-model="note" class="input" maxlength="500" />
+          </div>
+          <div class="row-2">
+            <button type="button" class="btn btn-secondary" @click="showMileageModal = false">
+              Cancel
+            </button>
             <button type="submit" class="btn btn-primary" :disabled="saving">
               {{ saving ? 'Saving…' : 'Save mileage' }}
             </button>
-          </form>
-        </div>
-      </details>
+          </div>
+        </form>
+      </Modal>
 
       <details class="card collapsible">
         <summary>

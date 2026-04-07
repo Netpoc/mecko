@@ -2,22 +2,36 @@
 import {
   cleanupOutdatedCaches,
   precacheAndRoute,
-  createHandlerBoundToURL,
 } from 'workbox-precaching'
 import { registerRoute, NavigationRoute } from 'workbox-routing'
 import { NetworkFirst, CacheFirst } from 'workbox-strategies'
 import { ExpirationPlugin } from 'workbox-expiration'
+import { clientsClaim } from 'workbox-core'
 import { get, set } from 'idb-keyval'
 
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
-try {
-  const handler = createHandlerBoundToURL('/index.html')
-  registerRoute(new NavigationRoute(handler))
-} catch (_) {
-  /* precache may not include index in some dev setups */
-}
+// Redeploy-safe navigation caching:
+// Prefer network for the app shell so we don't serve a stale index.html that references
+// hashed assets which no longer exist after a new deployment (common cause of 404s).
+registerRoute(
+  new NavigationRoute(
+    new NetworkFirst({
+      cacheName: 'pages',
+      networkTimeoutSeconds: 5,
+      plugins: [
+        new ExpirationPlugin({
+          maxEntries: 10,
+          maxAgeSeconds: 60 * 60 * 24,
+        }),
+      ],
+    })
+  )
+)
+
+self.addEventListener('install', () => self.skipWaiting())
+clientsClaim()
 
 registerRoute(
   ({ request }) =>
