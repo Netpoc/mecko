@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { api } from '../api/http'
+import { api, getToken } from '../api/http'
 import { set as idbSet } from 'idb-keyval'
 import { useAuthStore } from './auth'
 import {
@@ -8,7 +8,20 @@ import {
   loadVehiclesForUser,
   saveAdvisoryForUser,
   removeAdvisoryCache,
+  loadAdvisoryForUser,
 } from '../lib/deviceCache'
+import { DEFAULT_ACTIVITY_TITLES } from '../constants/serviceActivities'
+import {
+  loadQueue,
+  saveQueue,
+  remapVehicleIdInQueue,
+  enqueueVehicleCreate,
+  enqueueServiceActivity,
+  getPendingActivitiesForVehicle,
+  makeOfflineVehicleId,
+  makeOfflineActivityId,
+  removeServiceActivityFromQueue,
+} from '../lib/syncQueue'
 
 const SNAPSHOT_KEY = 'mecko-reminder-snapshot'
 
@@ -35,10 +48,68 @@ function authUserId() {
   }
 }
 
+function isNetworkFailure(e) {
+  return (
+    e?.status === 0 ||
+    (typeof e?.message === 'string' && e.message.includes('Failed to fetch'))
+  )
+}
+
+function buildSyntheticActivityRow(vehicleId, localActivityId, body) {
+  const performed_at = body.performed_at
+    ? new Date(body.performed_at).toISOString()
+    : new Date().toISOString()
+  let title =
+    (body.title && String(body.title).trim()) ||
+    DEFAULT_ACTIVITY_TITLES[body.activity_type] ||
+    'Service activity'
+  if (body.activity_type === 'recommendation_completed' && body.recommendation_ref?.title) {
+    title = `Done: ${body.recommendation_ref.title}`
+  }
+  const now = new Date().toISOString()
+  return {
+    id: localActivityId,
+    vehicle_id: vehicleId,
+    activity_type: body.activity_type,
+    title,
+    notes: body.notes ?? null,
+    obd_codes: body.obd_codes ?? null,
+    recommendation_ref: body.recommendation_ref ?? null,
+    odometer_km: body.odometer_km ?? null,
+    performed_at,
+    created_at: now,
+  }
+}
+
+function mergeActivities(server, pending) {
+  const map = new Map()
+  for (const r of [...server, ...pending]) {
+    if (r?.id) map.set(r.id, r)
+  }
+  return [...map.values()].sort((a, b) => {
+    const ta = new Date(a.performed_at || a.created_at).getTime()
+    const tb = new Date(b.performed_at || b.created_at).getTime()
+    return tb - ta
+  })
+}
+
+/** Keep not-yet-synced vehicles when replacing the list from GET /vehicles. */
+function mergeServerVehiclesWithOffline(fresh, previousList) {
+  const offline = (previousList || []).filter((v) => String(v.id).startsWith('offline-'))
+  const seen = new Set(fresh.map((v) => v.id))
+  const merged = [...offline.filter((v) => !seen.has(v.id)), ...fresh]
+  merged.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+  return merged
+}
+
 export const useVehiclesStore = defineStore('vehicles', () => {
   const list = ref([])
   const loading = ref(false)
   const error = ref(null)
+  /** Set when an offline vehicle id is replaced after sync (for router redirect). */
+  const lastVehicleIdReplacement = ref(null)
 
   async function persistList() {
     const uid = authUserId()
@@ -54,9 +125,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
       if (cached?.list?.length) list.value = cached.list
     }
     try {
+      const previous = list.value
       const fresh = await api('/api/vehicles')
-      list.value = fresh
-      if (uid) await saveVehiclesForUser(uid, fresh)
+      list.value = mergeServerVehiclesWithOffline(fresh, previous)
+      if (uid) await saveVehiclesForUser(uid, list.value)
       await writeReminderSnapshot(list.value)
     } catch (e) {
       const offline = e.status === 0 || !navigator.onLine
@@ -82,15 +154,55 @@ export const useVehiclesStore = defineStore('vehicles', () => {
     }
   }
 
-  async function createVehicle(payload) {
-    const row = await api('/api/vehicles', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async function createVehicleOffline(payload) {
+    const clientId = makeOfflineVehicleId()
+    const now = new Date().toISOString()
+    const mileageEntryId = makeOfflineActivityId()
+    const row = {
+      id: clientId,
+      nickname: payload.nickname,
+      make: payload.make,
+      model: payload.model,
+      year: payload.year,
+      current_odometer_km: payload.current_odometer_km,
+      last_mileage_at: now,
+      last_service_odometer_km: payload.last_service_odometer_km ?? null,
+      last_service_date: payload.last_service_date ?? null,
+      created_at: now,
+      offline_initial_mileage: {
+        id: mileageEntryId,
+        vehicle_id: clientId,
+        odometer_km: payload.current_odometer_km,
+        recorded_at: now,
+        note: 'Initial odometer',
+      },
+    }
+    await enqueueVehicleCreate(clientId, payload)
     list.value = [row, ...list.value.filter((v) => v.id !== row.id)]
     await writeReminderSnapshot(list.value)
     await persistList()
     return row
+  }
+
+  async function createVehicle(payload) {
+    if (!navigator.onLine) {
+      return createVehicleOffline(payload)
+    }
+    try {
+      const row = await api('/api/vehicles', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      list.value = [row, ...list.value.filter((v) => v.id !== row.id)]
+      await writeReminderSnapshot(list.value)
+      await persistList()
+      return row
+    } catch (e) {
+      if (isNetworkFailure(e)) {
+        return createVehicleOffline(payload)
+      }
+      throw e
+    }
   }
 
   async function updateVehicle(id, patch) {
@@ -105,6 +217,22 @@ export const useVehiclesStore = defineStore('vehicles', () => {
   }
 
   async function deleteVehicle(id) {
+    if (String(id).startsWith('offline-')) {
+      let queue = await loadQueue()
+      queue = queue.filter(
+        (o) =>
+          !(
+            (o.type === 'vehicle_create' && o.clientId === id) ||
+            (o.type === 'service_activity' && o.vehicleClientId === id)
+          )
+      )
+      await saveQueue(queue)
+      list.value = list.value.filter((v) => v.id !== id)
+      await removeAdvisoryCache(id)
+      await writeReminderSnapshot(list.value)
+      await persistList()
+      return
+    }
     await api(`/api/vehicles/${id}`, { method: 'DELETE' })
     list.value = list.value.filter((v) => v.id !== id)
     await removeAdvisoryCache(id)
@@ -124,14 +252,43 @@ export const useVehiclesStore = defineStore('vehicles', () => {
   }
 
   async function getMileageHistory(id) {
+    if (String(id).startsWith('offline-')) {
+      const v = list.value.find((x) => x.id === id)
+      if (v?.offline_initial_mileage) return [v.offline_initial_mileage]
+      return []
+    }
     return api(`/api/vehicles/${id}/mileage`)
   }
 
   async function getRecommendations(id) {
+    if (String(id).startsWith('offline-')) {
+      const v = list.value.find((x) => x.id === id)
+      if (!v) {
+        const err = new Error('Vehicle not found')
+        err.status = 404
+        throw err
+      }
+      const now = new Date()
+      const ageYears = Math.max(0, now.getFullYear() - Number(v.year))
+      return {
+        generatedAt: now.toISOString(),
+        ageYears,
+        kmPerWeek: null,
+        kmPerDay: null,
+        items: [],
+      }
+    }
     return api(`/api/vehicles/${id}/recommendations`)
   }
 
   async function fetchOne(id) {
+    if (String(id).startsWith('offline-')) {
+      const row = list.value.find((v) => v.id === id)
+      if (row) return row
+      const err = new Error('Vehicle not found')
+      err.status = 404
+      throw err
+    }
     const row = await api(`/api/vehicles/${id}`)
     const idx = list.value.findIndex((v) => v.id === id)
     if (idx >= 0) list.value[idx] = row
@@ -149,26 +306,141 @@ export const useVehiclesStore = defineStore('vehicles', () => {
   }
 
   async function getServiceActivities(vehicleId) {
-    return api(`/api/vehicles/${vehicleId}/service-activities`)
+    const queue = await loadQueue()
+    const pending = getPendingActivitiesForVehicle(queue, vehicleId)
+    let server = []
+    try {
+      if (navigator.onLine && !String(vehicleId).startsWith('offline-')) {
+        server = await api(`/api/vehicles/${vehicleId}/service-activities`)
+      }
+    } catch (e) {
+      if (!isNetworkFailure(e) && e.status !== 404) throw e
+      server = []
+    }
+    return mergeActivities(server, pending)
   }
 
   async function addServiceActivity(vehicleId, body) {
-    return api(`/api/vehicles/${vehicleId}/service-activities`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
+    const localId = makeOfflineActivityId()
+    const previewRow = buildSyntheticActivityRow(vehicleId, localId, body)
+    if (!navigator.onLine) {
+      await enqueueServiceActivity(vehicleId, body, previewRow)
+      return previewRow
+    }
+    try {
+      return await api(`/api/vehicles/${vehicleId}/service-activities`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    } catch (e) {
+      if (isNetworkFailure(e)) {
+        await enqueueServiceActivity(vehicleId, body, previewRow)
+        return previewRow
+      }
+      throw e
+    }
   }
 
   async function deleteServiceActivity(vehicleId, activityId) {
+    if (String(activityId).startsWith('offline-')) {
+      await removeServiceActivityFromQueue(vehicleId, activityId)
+      return
+    }
     await api(`/api/vehicles/${vehicleId}/service-activities/${activityId}`, {
       method: 'DELETE',
     })
+  }
+
+  /**
+   * Upload queued vehicle creates and service activities (FIFO).
+   * Call when the app is online and after login.
+   */
+  async function flushSyncQueue() {
+    if (!navigator.onLine || !getToken()) return
+    let queue = await loadQueue()
+    if (!queue.length) return
+
+    const uid = authUserId()
+
+    while (queue.length) {
+      const op = queue[0]
+      if (op.type === 'vehicle_create') {
+        try {
+          const row = await api('/api/vehicles', {
+            method: 'POST',
+            body: JSON.stringify(op.payload),
+          })
+          queue = remapVehicleIdInQueue(queue.slice(1), op.clientId, row.id)
+          list.value = list.value.map((v) => (v.id === op.clientId ? row : v))
+          lastVehicleIdReplacement.value = { from: op.clientId, to: row.id }
+          await writeReminderSnapshot(list.value)
+          await persistList()
+          if (uid) {
+            const cached = await loadAdvisoryForUser(uid, op.clientId)
+            if (cached) {
+              await saveAdvisoryForUser(uid, row.id, {
+                history: cached.history,
+                recs: cached.recs,
+              })
+              await removeAdvisoryCache(op.clientId)
+            }
+          }
+          await saveQueue(queue)
+        } catch (e) {
+          if (e.status === 401 || e.status === 403) break
+          if (e.status >= 400 && e.status < 500) {
+            queue = queue.slice(1)
+            await saveQueue(queue)
+            continue
+          }
+          break
+        }
+      } else if (op.type === 'service_activity') {
+        let vid = op.vehicleClientId
+        if (String(vid).startsWith('offline-')) {
+          break
+        }
+        try {
+          await api(`/api/vehicles/${vid}/service-activities`, {
+            method: 'POST',
+            body: JSON.stringify(op.payload),
+          })
+          queue = queue.slice(1)
+          await saveQueue(queue)
+        } catch (e) {
+          if (e.status === 401 || e.status === 403) break
+          if (e.status >= 400 && e.status < 500) {
+            queue = queue.slice(1)
+            await saveQueue(queue)
+            continue
+          }
+          break
+        }
+      } else {
+        queue = queue.slice(1)
+        await saveQueue(queue)
+      }
+    }
+
+    if (navigator.onLine && getToken()) {
+      try {
+        await fetchAll()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function clearLastVehicleIdReplacement() {
+    lastVehicleIdReplacement.value = null
   }
 
   return {
     list,
     loading,
     error,
+    lastVehicleIdReplacement,
+    clearLastVehicleIdReplacement,
     fetchAll,
     createVehicle,
     updateVehicle,
@@ -181,5 +453,6 @@ export const useVehiclesStore = defineStore('vehicles', () => {
     getServiceActivities,
     addServiceActivity,
     deleteServiceActivity,
+    flushSyncQueue,
   }
 })

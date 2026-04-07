@@ -70,7 +70,8 @@ export async function clearVehicleCaches() {
     if (
       s === VEHICLES_KEY ||
       s.startsWith('mecko-advisory-') ||
-      s === 'mecko-reminder-snapshot'
+      s === 'mecko-reminder-snapshot' ||
+      s === 'mecko-sync-queue'
     ) {
       await del(k)
     }

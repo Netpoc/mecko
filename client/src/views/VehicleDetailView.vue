@@ -131,6 +131,17 @@ async function load() {
 
 onMounted(load)
 
+watch(
+  () => vehicles.lastVehicleIdReplacement,
+  (ev) => {
+    if (!ev) return
+    if (String(route.params.id) === ev.from) {
+      router.replace({ name: 'vehicle-detail', params: { id: ev.to } })
+    }
+    vehicles.clearLastVehicleIdReplacement()
+  }
+)
+
 function setQuickType(t) {
   activityForm.value.activity_type = t
 }
