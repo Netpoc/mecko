@@ -30,7 +30,7 @@ onMounted(() => {
         <RouterLink :to="{ name: 'vehicle-detail', params: { id: v.id } }" class="vehicle-card-link">
           <h2>{{ v.nickname }}</h2>
           <p class="muted">{{ v.make }} {{ v.model }} · {{ v.year }}</p>
-          <p class="odo">{{ v.current_odometer_km.toLocaleString() }} km</p>
+          <p class="odo">{{ v.current_odometer_mi.toLocaleString() }} mi</p>
         </RouterLink>
       </li>
     </ul>

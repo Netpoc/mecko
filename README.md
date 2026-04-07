@@ -1,6 +1,6 @@
 # Mecko
 
-**Mecko** is a progressive web app (PWA) for car owners to track mileage, get servicing reminders, log maintenance activities, and view heuristic service guidance. It includes a **Vue 3** frontend and a **Node.js** backend with **SQLite** storage.
+**Mecko** is a progressive web app (PWA) for car owners to track mileage, get servicing reminders, log maintenance activities, and view heuristic service guidance. It includes a **Vue 3** frontend and a **Node.js** backend with **MongoDB** storage.
 
 ---
 
@@ -11,7 +11,7 @@
 - **Mileage** — Log odometer readings with history; usage trend feeds recommendations.
 - **Reminders** — After ~1 week without a new reading: weekly-style nudges; from ~week 3: morning-window nudges (browser notifications + periodic background sync where supported).
 - **Service & component guidance** — Server-side heuristics from mileage delta, vehicle age, and logged last service (not a substitute for the owner’s manual or a qualified mechanic).
-- **Service activity log** — Record spark plug work, OBD-II scans/fixes, tires, brake fluid, “recommended item done,” and more; stored per vehicle in SQLite.
+- **Service activity log** — Record spark plug work, OBD-II scans/fixes, tires, brake fluid, “recommended item done,” and more; stored per vehicle in MongoDB.
 - **Maintenance guide** — In-app general how-to content (oil, fluids, tires, brakes, etc.).
 - **Offline-friendly UI** — Service worker caches the app shell and API GETs; vehicle list and last advisory snapshot are stored in **IndexedDB** on the device (cleared on logout).
 - **PWA** — Install from the browser; manifest and icons for home screen / standalone window.
@@ -39,12 +39,12 @@ mecko/
 │   └── .env.development    # VITE_API_URL (see Environment)
 └── server/                 # Express 5 API
     ├── src/
-    │   ├── db.js           # SQLite schema + connection
+    │   ├── mongo.js        # MongoDB connection
     │   ├── index.js        # App bootstrap
     │   ├── middleware/
     │   ├── routes/         # auth, vehicles (+ mileage, recommendations, service-activities)
     │   └── lib/            # recommendations engine
-    ├── data/               # mecko.db (created at runtime; gitignored)
+    ├── data/               # (legacy) SQLite location; no longer used when using MongoDB
     └── .env.example
 ```
 
@@ -52,7 +52,7 @@ mecko/
 
 ## Prerequisites
 
-- **Node.js** 18+ (20+ recommended for native addons such as `better-sqlite3`).
+- **Node.js** 18+ (20+ recommended).
 - **npm** (uses `package.json` `overrides` for Vite 8 + `vite-plugin-pwa`).
 
 ---
@@ -98,7 +98,7 @@ mecko/
 
 5. Open **http://localhost:5173**, register an account, add a vehicle, and use the app.
 
-After **pulling changes that change `server/src/db.js`**, restart the API once so new tables (e.g. `service_activities`) are created.
+After updating the server, restart the API once so it reconnects cleanly to MongoDB.
 
 ---
 
@@ -125,7 +125,7 @@ After **pulling changes that change `server/src/db.js`**, restart the API once s
 | `PORT` | HTTP port (default `3001`) |
 | `JWT_SECRET` | Secret for signing JWTs (**required** in production; use a long random string) |
 | `CLIENT_ORIGIN` | CORS origin for the browser app (e.g. `http://localhost:5173`) |
-| `SQLITE_PATH` | Optional; override SQLite file path (default: `server/data/mecko.db`) |
+| `MONGODB_URI` | **Required**; MongoDB Atlas connection string |
 
 ### Client
 
@@ -164,7 +164,7 @@ Send `Authorization: Bearer <token>` on protected routes.
 
 3. Run the API with `NODE_ENV=production`, a real `JWT_SECRET`, and `CLIENT_ORIGIN` set to your frontend origin.
 
-4. Ensure the SQLite file (`server/data/mecko.db` or `SQLITE_PATH`) is on persistent storage and backed up if needed.
+4. **Important (deployments):** if you deploy on a platform with **ephemeral disk**, do not use file-based databases for persistence. MongoDB Atlas will persist across redeploys/restarts.
 
 ---
 

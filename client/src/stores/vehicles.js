@@ -75,7 +75,7 @@ function buildSyntheticActivityRow(vehicleId, localActivityId, body) {
     notes: body.notes ?? null,
     obd_codes: body.obd_codes ?? null,
     recommendation_ref: body.recommendation_ref ?? null,
-    odometer_km: body.odometer_km ?? null,
+    odometer_mi: body.odometer_mi ?? null,
     performed_at,
     created_at: now,
   }
@@ -164,15 +164,15 @@ export const useVehiclesStore = defineStore('vehicles', () => {
       make: payload.make,
       model: payload.model,
       year: payload.year,
-      current_odometer_km: payload.current_odometer_km,
+      current_odometer_mi: payload.current_odometer_mi,
       last_mileage_at: now,
-      last_service_odometer_km: payload.last_service_odometer_km ?? null,
+      last_service_odometer_mi: payload.last_service_odometer_mi ?? null,
       last_service_date: payload.last_service_date ?? null,
       created_at: now,
       offline_initial_mileage: {
         id: mileageEntryId,
         vehicle_id: clientId,
-        odometer_km: payload.current_odometer_km,
+        odometer_mi: payload.current_odometer_mi,
         recorded_at: now,
         note: 'Initial odometer',
       },
@@ -240,10 +240,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
     await persistList()
   }
 
-  async function addMileage(id, odometer_km, note) {
+  async function addMileage(id, odometer_mi, note) {
     const data = await api(`/api/vehicles/${id}/mileage`, {
       method: 'POST',
-      body: JSON.stringify({ odometer_km, note: note || null }),
+      body: JSON.stringify({ odometer_mi, note: note || null }),
     })
     list.value = list.value.map((v) => (v.id === id ? data.vehicle : v))
     await writeReminderSnapshot(list.value)
@@ -273,8 +273,8 @@ export const useVehiclesStore = defineStore('vehicles', () => {
       return {
         generatedAt: now.toISOString(),
         ageYears,
-        kmPerWeek: null,
-        kmPerDay: null,
+        miPerWeek: null,
+        miPerDay: null,
         items: [],
       }
     }

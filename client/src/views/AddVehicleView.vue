@@ -11,8 +11,8 @@ const nickname = ref('')
 const make = ref('')
 const model = ref('')
 const year = ref(new Date().getFullYear())
-const current_odometer_km = ref(0)
-const last_service_odometer_km = ref('')
+const current_odometer_mi = ref(0)
+const last_service_odometer_mi = ref('')
 const last_service_date = ref('')
 const localError = ref('')
 const saving = ref(false)
@@ -26,9 +26,9 @@ async function submit() {
       make: make.value.trim(),
       model: model.value.trim(),
       year: Number(year.value),
-      current_odometer_km: Number(current_odometer_km.value),
-      last_service_odometer_km: last_service_odometer_km.value
-        ? Number(last_service_odometer_km.value)
+      current_odometer_mi: Number(current_odometer_mi.value),
+      last_service_odometer_mi: last_service_odometer_mi.value
+        ? Number(last_service_odometer_mi.value)
         : null,
       last_service_date: last_service_date.value || null,
     }
@@ -71,8 +71,8 @@ async function submit() {
           <input id="year" v-model.number="year" class="input" type="number" min="1980" required />
         </div>
         <div>
-          <label class="label" for="odo">Current odometer (km)</label>
-          <input id="odo" v-model.number="current_odometer_km" class="input" type="number" min="0" required />
+          <label class="label" for="odo">Current odometer (mi)</label>
+          <input id="odo" v-model.number="current_odometer_mi" class="input" type="number" min="0" required />
         </div>
       </div>
       <fieldset class="fieldset">
@@ -81,7 +81,7 @@ async function submit() {
         <div class="row-2">
           <div>
             <label class="label" for="ls-odo">Odometer at last service</label>
-            <input id="ls-odo" v-model="last_service_odometer_km" class="input" type="number" min="0" />
+            <input id="ls-odo" v-model="last_service_odometer_mi" class="input" type="number" min="0" />
           </div>
           <div>
             <label class="label" for="ls-date">Date</label>

@@ -1,8 +1,11 @@
 const express = require('express');
 const { z } = require('zod');
-const { db, generateId } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { buildRecommendations } = require('../lib/recommendations');
+const { generateId } = require('../lib/ids');
+const Vehicle = require('../models/Vehicle');
+const MileageEntry = require('../models/MileageEntry');
+const ServiceActivity = require('../models/ServiceActivity');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -12,25 +15,44 @@ const vehicleCreate = z.object({
   make: z.string().min(1).max(80),
   model: z.string().min(1).max(80),
   year: z.coerce.number().int().min(1980).max(new Date().getFullYear() + 1),
-  current_odometer_km: z.coerce.number().int().min(0),
-  last_service_odometer_km: z.coerce.number().int().min(0).optional().nullable(),
+  current_odometer_mi: z.coerce.number().int().min(0),
+  last_service_odometer_mi: z.coerce.number().int().min(0).optional().nullable(),
   last_service_date: z.string().optional().nullable(),
 });
 
 const vehiclePatch = vehicleCreate.partial();
 
-router.get('/', (req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date, created_at
-       FROM vehicles WHERE user_id = ? ORDER BY created_at DESC`
-    )
-    .all(req.userId);
-  res.json(rows);
+function stripId(doc) {
+  if (!doc) return doc;
+  const { _id, ...rest } = doc;
+  return { ...rest, id: _id };
+}
+
+async function assertVehicleOwner(vehicleId, userId) {
+  const v = await Vehicle.findOne({ _id: vehicleId, user_id: userId }).select({ _id: 1 }).lean();
+  return Boolean(v);
+}
+
+router.get('/', async (req, res) => {
+  const rows = await Vehicle.find({ user_id: req.userId })
+    .sort({ created_at: -1 })
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+      created_at: 1,
+    })
+    .lean();
+  res.json(rows.map(stripId));
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const parsed = vehicleCreate.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
@@ -38,114 +60,149 @@ router.post('/', (req, res) => {
   const d = parsed.data;
   const id = generateId();
   const last_mileage_at = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO vehicles (
-      id, user_id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-      last_service_odometer_km, last_service_date
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    req.userId,
-    d.nickname,
-    d.make,
-    d.model,
-    d.year,
-    d.current_odometer_km,
+
+  await Vehicle.create({
+    _id: id,
+    user_id: req.userId,
+    nickname: d.nickname,
+    make: d.make,
+    model: d.model,
+    year: d.year,
+    current_odometer_mi: d.current_odometer_mi,
     last_mileage_at,
-    d.last_service_odometer_km ?? null,
-    d.last_service_date ?? null
-  );
-  db.prepare(
-    `INSERT INTO mileage_entries (id, vehicle_id, odometer_km, recorded_at, note)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(generateId(), id, d.current_odometer_km, last_mileage_at, 'Initial odometer');
-  const row = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date, created_at
-       FROM vehicles WHERE id = ?`
-    )
-    .get(id);
-  res.status(201).json(row);
+    last_service_odometer_mi: d.last_service_odometer_mi ?? null,
+    last_service_date: d.last_service_date ?? null,
+  });
+  await MileageEntry.create({
+    _id: generateId(),
+    vehicle_id: id,
+    odometer_mi: d.current_odometer_mi,
+    recorded_at: last_mileage_at,
+    note: 'Initial odometer',
+  });
+
+  const row = await Vehicle.findById(id)
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+      created_at: 1,
+    })
+    .lean();
+  res.status(201).json(stripId(row));
 });
 
-router.get('/:id/mileage', (req, res) => {
-  const v = db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND user_id = ?')
-    .get(req.params.id, req.userId);
-  if (!v) return res.status(404).json({ error: 'Vehicle not found' });
-  const entries = db
-    .prepare(
-      `SELECT id, odometer_km, recorded_at, note FROM mileage_entries
-       WHERE vehicle_id = ? ORDER BY recorded_at DESC LIMIT 100`
-    )
-    .all(req.params.id);
-  res.json(entries);
+router.get('/:id/mileage', async (req, res) => {
+  if (!(await assertVehicleOwner(req.params.id, req.userId))) {
+    return res.status(404).json({ error: 'Vehicle not found' });
+  }
+  const entries = await MileageEntry.find({ vehicle_id: req.params.id })
+    .sort({ recorded_at: -1 })
+    .limit(100)
+    .select({ _id: 1, odometer_mi: 1, recorded_at: 1, note: 1 })
+    .lean();
+  res.json(entries.map(stripId));
 });
 
 const mileagePost = z.object({
-  odometer_km: z.coerce.number().int().min(0),
+  odometer_mi: z.coerce.number().int().min(0),
   note: z.string().max(500).optional().nullable(),
 });
 
-router.post('/:id/mileage', (req, res) => {
+router.post('/:id/mileage', async (req, res) => {
   const parsed = mileagePost.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
-  const vehicle = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date
-       FROM vehicles WHERE id = ? AND user_id = ?`
-    )
-    .get(req.params.id, req.userId);
+
+  const vehicle = await Vehicle.findOne({ _id: req.params.id, user_id: req.userId })
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+    })
+    .lean();
   if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-  const { odometer_km, note } = parsed.data;
-  if (odometer_km < vehicle.current_odometer_km) {
+
+  const { odometer_mi, note } = parsed.data;
+  if (odometer_mi < vehicle.current_odometer_mi) {
     return res.status(400).json({ error: 'Odometer cannot be less than current reading' });
   }
+
   const recorded_at = new Date().toISOString();
   const entryId = generateId();
-  db.prepare(
-    `INSERT INTO mileage_entries (id, vehicle_id, odometer_km, recorded_at, note)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(entryId, vehicle.id, odometer_km, recorded_at, note ?? null);
-  db.prepare(
-    `UPDATE vehicles SET current_odometer_km = ?, last_mileage_at = ? WHERE id = ?`
-  ).run(odometer_km, recorded_at, vehicle.id);
-  const entries = db
-    .prepare(
-      `SELECT id, odometer_km, recorded_at, note FROM mileage_entries
-       WHERE vehicle_id = ? ORDER BY recorded_at DESC LIMIT 20`
-    )
-    .all(vehicle.id);
-  const updated = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date, created_at
-       FROM vehicles WHERE id = ?`
-    )
-    .get(vehicle.id);
-  res.status(201).json({ vehicle: updated, entry: entries[0], entries });
+  await MileageEntry.create({
+    _id: entryId,
+    vehicle_id: vehicle._id,
+    odometer_mi,
+    recorded_at,
+    note: note ?? null,
+  });
+  await Vehicle.updateOne(
+    { _id: vehicle._id, user_id: req.userId },
+    { $set: { current_odometer_mi: odometer_mi, last_mileage_at: recorded_at } }
+  );
+
+  const entries = await MileageEntry.find({ vehicle_id: vehicle._id })
+    .sort({ recorded_at: -1 })
+    .limit(20)
+    .select({ _id: 1, odometer_mi: 1, recorded_at: 1, note: 1 })
+    .lean();
+  const updated = await Vehicle.findById(vehicle._id)
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+      created_at: 1,
+    })
+    .lean();
+
+  res.status(201).json({
+    vehicle: stripId(updated),
+    entry: stripId(entries[0]),
+    entries: entries.map(stripId),
+  });
 });
 
-router.get('/:id/recommendations', (req, res) => {
-  const vehicle = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date
-       FROM vehicles WHERE id = ? AND user_id = ?`
-    )
-    .get(req.params.id, req.userId);
+router.get('/:id/recommendations', async (req, res) => {
+  const vehicle = await Vehicle.findOne({ _id: req.params.id, user_id: req.userId })
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+    })
+    .lean();
   if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
-  const mileageEntries = db
-    .prepare(
-      `SELECT odometer_km, recorded_at FROM mileage_entries
-       WHERE vehicle_id = ? ORDER BY recorded_at DESC LIMIT 10`
-    )
-    .all(req.params.id);
-  res.json(buildRecommendations(vehicle, mileageEntries));
+  const mileageEntries = await MileageEntry.find({ vehicle_id: req.params.id })
+    .sort({ recorded_at: -1 })
+    .limit(10)
+    .select({ odometer_mi: 1, recorded_at: 1 })
+    .lean();
+  res.json(buildRecommendations(stripId(vehicle), mileageEntries));
 });
 
 const activityTypes = z.enum([
@@ -175,7 +232,7 @@ const serviceActivityPost = z.object({
   obd_codes: z.string().max(500).optional().nullable(),
   recommendation_ref: recommendationRefSchema,
   performed_at: z.string().optional().nullable(),
-  odometer_km: z.coerce.number().int().min(0).optional().nullable(),
+  odometer_mi: z.coerce.number().int().min(0).optional().nullable(),
 });
 
 const DEFAULT_ACTIVITY_TITLES = {
@@ -188,178 +245,159 @@ const DEFAULT_ACTIVITY_TITLES = {
   other: 'Service activity',
 };
 
-function assertVehicleOwner(vehicleId, userId) {
-  return db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND user_id = ?')
-    .get(vehicleId, userId);
-}
-
-router.get('/:id/service-activities', (req, res) => {
-  if (!assertVehicleOwner(req.params.id, req.userId)) {
+router.get('/:id/service-activities', async (req, res) => {
+  if (!(await assertVehicleOwner(req.params.id, req.userId))) {
     return res.status(404).json({ error: 'Vehicle not found' });
   }
-  let rows;
-  try {
-    rows = db
-      .prepare(
-        `SELECT id, vehicle_id, activity_type, title, notes, obd_codes, recommendation_ref,
-                odometer_km, performed_at, created_at
-         FROM service_activities WHERE vehicle_id = ? ORDER BY performed_at DESC, created_at DESC LIMIT 200`
-      )
-      .all(req.params.id);
-  } catch (e) {
-    return res.status(503).json({
-      error: 'Service activities unavailable',
-      detail: 'Restart the API server after updating so the database schema can create service_activities.',
-    });
-  }
-  const parsed = rows.map((r) => {
-    let recommendation_ref = null;
-    if (r.recommendation_ref) {
-      try {
-        recommendation_ref = JSON.parse(r.recommendation_ref);
-      } catch {
-        recommendation_ref = null;
-      }
-    }
-    return { ...r, recommendation_ref };
-  });
-  res.json(parsed);
+  const rows = await ServiceActivity.find({ vehicle_id: req.params.id })
+    .sort({ performed_at: -1, created_at: -1 })
+    .limit(200)
+    .select({
+      _id: 1,
+      vehicle_id: 1,
+      activity_type: 1,
+      title: 1,
+      notes: 1,
+      obd_codes: 1,
+      recommendation_ref: 1,
+      odometer_mi: 1,
+      performed_at: 1,
+      created_at: 1,
+    })
+    .lean();
+  res.json(rows.map(stripId));
 });
 
-router.post('/:id/service-activities', (req, res) => {
+router.post('/:id/service-activities', async (req, res) => {
   const parsed = serviceActivityPost.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
-  if (!assertVehicleOwner(req.params.id, req.userId)) {
+  if (!(await assertVehicleOwner(req.params.id, req.userId))) {
     return res.status(404).json({ error: 'Vehicle not found' });
   }
   const d = parsed.data;
+
   let title =
-    (d.title && d.title.trim()) ||
-    DEFAULT_ACTIVITY_TITLES[d.activity_type] ||
-    'Service activity';
+    (d.title && d.title.trim()) || DEFAULT_ACTIVITY_TITLES[d.activity_type] || 'Service activity';
   if (d.activity_type === 'recommendation_completed' && d.recommendation_ref?.title) {
     title = `Done: ${d.recommendation_ref.title}`;
   }
   const performed_at = d.performed_at
     ? new Date(d.performed_at).toISOString()
     : new Date().toISOString();
+
   const activityId = generateId();
-  const refJson = d.recommendation_ref ? JSON.stringify(d.recommendation_ref) : null;
-  db.prepare(
-    `INSERT INTO service_activities (
-      id, vehicle_id, activity_type, title, notes, obd_codes, recommendation_ref, odometer_km, performed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    activityId,
-    req.params.id,
-    d.activity_type,
+  await ServiceActivity.create({
+    _id: activityId,
+    vehicle_id: req.params.id,
+    activity_type: d.activity_type,
     title,
-    d.notes ?? null,
-    d.obd_codes ?? null,
-    refJson,
-    d.odometer_km ?? null,
-    performed_at
-  );
-  const row = db
-    .prepare(
-      `SELECT id, vehicle_id, activity_type, title, notes, obd_codes, recommendation_ref,
-              odometer_km, performed_at, created_at FROM service_activities WHERE id = ?`
-    )
-    .get(activityId);
-  let recommendation_ref = null;
-  if (row.recommendation_ref) {
-    try {
-      recommendation_ref = JSON.parse(row.recommendation_ref);
-    } catch {
-      recommendation_ref = null;
-    }
-  }
-  res.status(201).json({ ...row, recommendation_ref });
+    notes: d.notes ?? null,
+    obd_codes: d.obd_codes ?? null,
+    recommendation_ref: d.recommendation_ref ?? null,
+    odometer_mi: d.odometer_mi ?? null,
+    performed_at,
+  });
+
+  const row = await ServiceActivity.findById(activityId)
+    .select({
+      _id: 1,
+      vehicle_id: 1,
+      activity_type: 1,
+      title: 1,
+      notes: 1,
+      obd_codes: 1,
+      recommendation_ref: 1,
+      odometer_mi: 1,
+      performed_at: 1,
+      created_at: 1,
+    })
+    .lean();
+  res.status(201).json(stripId(row));
 });
 
-router.delete('/:id/service-activities/:activityId', (req, res) => {
-  if (!assertVehicleOwner(req.params.id, req.userId)) {
+router.delete('/:id/service-activities/:activityId', async (req, res) => {
+  if (!(await assertVehicleOwner(req.params.id, req.userId))) {
     return res.status(404).json({ error: 'Vehicle not found' });
   }
-  const r = db
-    .prepare(
-      'DELETE FROM service_activities WHERE id = ? AND vehicle_id = ?'
-    )
-    .run(req.params.activityId, req.params.id);
-  if (r.changes === 0) return res.status(404).json({ error: 'Activity not found' });
+  const r = await ServiceActivity.deleteOne({
+    _id: req.params.activityId,
+    vehicle_id: req.params.id,
+  });
+  if (r.deletedCount === 0) return res.status(404).json({ error: 'Activity not found' });
   res.status(204).send();
 });
 
-router.get('/:id', (req, res) => {
-  const row = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date, created_at
-       FROM vehicles WHERE id = ? AND user_id = ?`
-    )
-    .get(req.params.id, req.userId);
+router.get('/:id', async (req, res) => {
+  const row = await Vehicle.findOne({ _id: req.params.id, user_id: req.userId })
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+      created_at: 1,
+    })
+    .lean();
   if (!row) return res.status(404).json({ error: 'Vehicle not found' });
-  res.json(row);
+  res.json(stripId(row));
 });
 
-router.patch('/:id', (req, res) => {
+router.patch('/:id', async (req, res) => {
   const parsed = vehiclePatch.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
   }
-  const existing = db
-    .prepare('SELECT id FROM vehicles WHERE id = ? AND user_id = ?')
-    .get(req.params.id, req.userId);
+  const existing = await Vehicle.findOne({ _id: req.params.id, user_id: req.userId })
+    .select({ _id: 1 })
+    .lean();
   if (!existing) return res.status(404).json({ error: 'Vehicle not found' });
+
   const d = parsed.data;
-  const fields = [];
-  const values = [];
-  for (const key of [
+  const allowed = [
     'nickname',
     'make',
     'model',
     'year',
-    'current_odometer_km',
-    'last_service_odometer_km',
+    'current_odometer_mi',
+    'last_service_odometer_mi',
     'last_service_date',
-  ]) {
-    if (d[key] !== undefined) {
-      fields.push(`${key} = ?`);
-      values.push(d[key]);
-    }
+  ];
+  const set = {};
+  for (const k of allowed) {
+    if (d[k] !== undefined) set[k] = d[k];
   }
-  if (fields.length === 0) {
-    const row = db
-      .prepare(
-        `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-                last_service_odometer_km, last_service_date, created_at
-         FROM vehicles WHERE id = ?`
-      )
-      .get(req.params.id);
-    return res.json(row);
+  if (Object.keys(set).length) {
+    await Vehicle.updateOne({ _id: req.params.id, user_id: req.userId }, { $set: set });
   }
-  values.push(req.params.id, req.userId);
-  db.prepare(`UPDATE vehicles SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`).run(
-    ...values
-  );
-  const row = db
-    .prepare(
-      `SELECT id, nickname, make, model, year, current_odometer_km, last_mileage_at,
-              last_service_odometer_km, last_service_date, created_at
-       FROM vehicles WHERE id = ?`
-    )
-    .get(req.params.id);
-  res.json(row);
+
+  const row = await Vehicle.findById(req.params.id)
+    .select({
+      _id: 1,
+      nickname: 1,
+      make: 1,
+      model: 1,
+      year: 1,
+      current_odometer_mi: 1,
+      last_mileage_at: 1,
+      last_service_odometer_mi: 1,
+      last_service_date: 1,
+      created_at: 1,
+    })
+    .lean();
+  res.json(stripId(row));
 });
 
-router.delete('/:id', (req, res) => {
-  const r = db
-    .prepare('DELETE FROM vehicles WHERE id = ? AND user_id = ?')
-    .run(req.params.id, req.userId);
-  if (r.changes === 0) return res.status(404).json({ error: 'Vehicle not found' });
+router.delete('/:id', async (req, res) => {
+  const r = await Vehicle.deleteOne({ _id: req.params.id, user_id: req.userId });
+  if (r.deletedCount === 0) return res.status(404).json({ error: 'Vehicle not found' });
+  await MileageEntry.deleteMany({ vehicle_id: req.params.id });
+  await ServiceActivity.deleteMany({ vehicle_id: req.params.id });
   res.status(204).send();
 });
 

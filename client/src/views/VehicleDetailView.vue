@@ -38,7 +38,7 @@ const activityForm = ref({
   notes: '',
   obd_codes: '',
   performed_at: '',
-  odometer_km: '',
+  odometer_mi: '',
 })
 
 const showObdFields = computed(() =>
@@ -55,9 +55,9 @@ watch(
   vehicle,
   (v) => {
     if (v) {
-      odometer.value = v.current_odometer_km
+      odometer.value = v.current_odometer_mi
       svcOdo.value =
-        v.last_service_odometer_km != null ? String(v.last_service_odometer_km) : ''
+        v.last_service_odometer_mi != null ? String(v.last_service_odometer_mi) : ''
       svcDate.value = v.last_service_date ? v.last_service_date.slice(0, 10) : ''
     }
   },
@@ -156,12 +156,12 @@ async function submitActivity() {
       notes: f.notes.trim() || null,
       obd_codes: showObdFields.value ? f.obd_codes.trim() || null : null,
       performed_at: f.performed_at ? new Date(f.performed_at).toISOString() : null,
-      odometer_km: f.odometer_km === '' || f.odometer_km == null ? null : Number(f.odometer_km),
+      odometer_mi: f.odometer_mi === '' || f.odometer_mi == null ? null : Number(f.odometer_mi),
     }
     await vehicles.addServiceActivity(id.value, body)
     f.notes = ''
     f.obd_codes = ''
-    f.odometer_km = ''
+    f.odometer_mi = ''
     f.performed_at = todayInputDate()
     await loadServiceActivities()
   } catch (e) {
@@ -229,7 +229,7 @@ async function saveLastService() {
   svcSaving.value = true
   try {
     await vehicles.updateVehicle(id.value, {
-      last_service_odometer_km: svcOdo.value ? Number(svcOdo.value) : null,
+      last_service_odometer_mi: svcOdo.value ? Number(svcOdo.value) : null,
       last_service_date: svcDate.value || null,
     })
     recs.value = await vehicles.getRecommendations(id.value)
@@ -284,20 +284,20 @@ function severityClass(s) {
         </summary>
         <div class="collapsible-body stack">
           <p class="muted">
-            Last reading: {{ vehicle.current_odometer_km.toLocaleString() }} km
+            Last reading: {{ vehicle.current_odometer_mi.toLocaleString() }} mi
             <span v-if="vehicle.last_mileage_at">
               · {{ new Date(vehicle.last_mileage_at).toLocaleString() }}
             </span>
           </p>
           <form class="stack" @submit.prevent="submitMileage">
             <div>
-              <label class="label" for="new-odo">Current odometer (km)</label>
+              <label class="label" for="new-odo">Current odometer (mi)</label>
               <input
                 id="new-odo"
                 v-model.number="odometer"
                 class="input"
                 type="number"
-                :min="vehicle.current_odometer_km"
+                :min="vehicle.current_odometer_mi"
                 required
               />
             </div>
@@ -400,11 +400,11 @@ function severityClass(s) {
                 <label class="label" for="act-odo">Odometer (optional)</label>
                 <input
                   id="act-odo"
-                  v-model="activityForm.odometer_km"
+                  v-model="activityForm.odometer_mi"
                   class="input"
                   type="number"
                   min="0"
-                  placeholder="km"
+                  placeholder="mi"
                 />
               </div>
             </div>
@@ -431,7 +431,7 @@ function severityClass(s) {
                   </template>
                   <p class="service-log-meta">
                     {{ new Date(a.performed_at).toLocaleString() }}
-                    <span v-if="a.odometer_km != null"> · {{ a.odometer_km.toLocaleString() }} km</span>
+                    <span v-if="a.odometer_mi != null"> · {{ a.odometer_mi.toLocaleString() }} mi</span>
                   </p>
                 </div>
                 <button
@@ -488,7 +488,7 @@ function severityClass(s) {
         <div class="collapsible-body">
           <ul class="history-list">
             <li v-for="e in history" :key="e.id">
-              <span>{{ e.odometer_km.toLocaleString() }} km</span>
+              <span>{{ e.odometer_mi.toLocaleString() }} mi</span>
               <span class="muted">{{ new Date(e.recorded_at).toLocaleString() }}</span>
               <span v-if="e.note" class="muted">{{ e.note }}</span>
             </li>

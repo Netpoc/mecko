@@ -61,7 +61,7 @@ import OfflineBanner from '../components/OfflineBanner.vue'
       <ul>
         <li>Check pressure monthly (cold tires) using the sticker on the door jamb, not only the sidewall maximum.</li>
         <li>Inspect tread depth and uneven wear; uneven wear can signal alignment or suspension issues.</li>
-        <li>Rotate tires per the manual (often every 8,000–12,000 km) so they wear evenly.</li>
+        <li>Rotate tires per the manual (often every 5,000–8,000 mi) so they wear evenly.</li>
         <li>After hitting a curb or pothole hard, consider an alignment check if the steering pulls or vibrates.</li>
       </ul>
     </article>
@@ -88,7 +88,7 @@ import OfflineBanner from '../components/OfflineBanner.vue'
       <h2>Belts &amp; hoses</h2>
       <ul>
         <li>Serpentine belt: look for cracks, glazing, or squeal on startup; replace on schedule if the manual lists intervals.</li>
-        <li>Timing belt (if equipped): often has a strict km <em>and</em> age limit — missing it can cause major engine damage.</li>
+        <li>Timing belt (if equipped): often has a strict mileage <em>and</em> age limit — missing it can cause major engine damage.</li>
         <li>Timing chain engines usually don’t need scheduled belt changes but can still develop faults; follow symptoms and manual.</li>
         <li>Coolant hoses: soft spots, bulges, or cracks mean replacement.</li>
       </ul>
@@ -108,7 +108,7 @@ import OfflineBanner from '../components/OfflineBanner.vue'
       <p>
         Logging odometer readings (as in Mecko) helps estimate how quickly you accumulate distance, plan
         oil and tire rotations, and prove service history at resale. Keep receipts and note the date and
-        km for each service.
+        miles for each service.
       </p>
     </article>
   </div>

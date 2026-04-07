@@ -70,7 +70,7 @@ onMounted(() => {
           <RouterLink :to="{ name: 'vehicle-detail', params: { id: v.id } }" class="mini-link">
             <strong>{{ v.nickname }}</strong>
             <span class="muted">{{ v.make }} {{ v.model }} ({{ v.year }})</span>
-            <span>{{ v.current_odometer_km.toLocaleString() }} km</span>
+            <span>{{ v.current_odometer_mi.toLocaleString() }} mi</span>
           </RouterLink>
         </li>
       </ul>
