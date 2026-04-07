@@ -54,6 +54,15 @@ onMounted(() => {
     </section>
 
     <section class="card">
+      <h2>Maintenance guide</h2>
+      <p class="muted">
+        General how-tos for oil, fluids, tires, brakes, and more — tailored tips still live on each
+        vehicle page.
+      </p>
+      <RouterLink to="/guide" class="btn btn-primary mt-1">Open maintenance guide</RouterLink>
+    </section>
+
+    <section class="card">
       <h2>Your vehicles</h2>
       <p v-if="!vehicles.list.length" class="muted">No vehicles yet.</p>
       <ul v-else class="vehicle-grid">

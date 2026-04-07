@@ -42,8 +42,22 @@ db.exec(`
     note TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS service_activities (
+    id TEXT PRIMARY KEY,
+    vehicle_id TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+    activity_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT,
+    obd_codes TEXT,
+    recommendation_ref TEXT,
+    odometer_km INTEGER,
+    performed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_vehicles_user ON vehicles(user_id);
   CREATE INDEX IF NOT EXISTS idx_mileage_vehicle ON mileage_entries(vehicle_id, recorded_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_service_vehicle ON service_activities(vehicle_id, performed_at DESC);
 `);
 
 function generateId() {

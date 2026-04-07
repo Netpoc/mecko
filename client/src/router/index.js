@@ -38,6 +38,12 @@ const routes = [
     component: () => import('../views/SettingsView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/guide',
+    name: 'maintenance-guide',
+    component: () => import('../views/MaintenanceGuideView.vue'),
+    meta: { requiresAuth: true },
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api, setToken, getToken } from '../api/http'
+import { clearVehicleCaches } from '../lib/deviceCache'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(getToken())
@@ -65,6 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    void clearVehicleCaches().catch(() => {})
     token.value = null
     user.value = null
     setToken(null)

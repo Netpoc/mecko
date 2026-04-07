@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   requestNotificationPermission,
   registerPeriodicMileageCheck,
@@ -72,10 +73,23 @@ onMounted(async () => {
     </section>
 
     <section class="card stack">
+      <h2>Data on this device</h2>
+      <p>
+        Your vehicle list, mileage history, and advisory summaries are saved in this browser’s
+        storage after each successful sync so lists load faster and you can review the last known
+        data offline. Logging out clears that saved data from this device.
+      </p>
+      <p>
+        The <RouterLink to="/guide">maintenance guide</RouterLink> is available anytime in the app and
+        works fully offline once the page has been opened at least once.
+      </p>
+    </section>
+
+    <section class="card stack">
       <h2>Offline</h2>
       <p>
-        The app shell and recent API responses are cached. You can open Mecko without a connection;
-        mileage saves require connectivity unless we add sync queues in a future version.
+        The app shell and recent API responses are also cached by the service worker. New mileage
+        entries still need a network connection to reach the server.
       </p>
     </section>
 
