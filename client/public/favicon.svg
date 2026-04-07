@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Mecko">
+  <rect width="64" height="64" rx="14" fill="#1e3a5f"/>
+  <path fill="#38bdf8" d="M12 38c2-8 10-14 20-14s18 6 20 14H12z"/>
+  <circle cx="22" cy="40" r="5" fill="#0f172a"/>
+  <circle cx="42" cy="40" r="5" fill="#0f172a"/>
+  <path fill="none" stroke="#94a3b8" stroke-width="2" d="M18 28h28"/>
+</svg>
